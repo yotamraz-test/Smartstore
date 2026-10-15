@@ -17,7 +17,6 @@ using Smartstore.Core.Rules;
 using Smartstore.Core.Rules.Rendering;
 using Smartstore.Core.Stores;
 using Smartstore.Scheduling;
-using Smartstore.Test.Common;
 using Smartstore.Threading;
 
 namespace Smartstore.Core.Tests.Platform.Identity;
@@ -306,12 +305,12 @@ public class TargetGroupEvaluatorTaskTests : TargetGroupEvaluatorTaskTestsBase
 
         // Only the eligible role should ever be reported as processed.
         Assert.That(harness.ProgressCalls, Has.Count.EqualTo(1));
-        harness.ProgressCalls[0].Message.ShouldEqual($"Add customer assignments for role \"{eligibleRole.SystemName}\".");
+        Assert.That(harness.ProgressCalls[0].Message, Is.EqualTo($"Add customer assignments for role \"{eligibleRole.SystemName}\"."));
 
         var mappings = await DbContext.CustomerRoleMappings.AsNoTracking().ToListAsync();
         Assert.That(mappings, Has.Count.EqualTo(1));
-        mappings[0].CustomerRoleId.ShouldEqual(eligibleRole.Id);
-        mappings[0].CustomerId.ShouldEqual(customer.Id);
+        Assert.That(mappings[0].CustomerRoleId, Is.EqualTo(eligibleRole.Id));
+        Assert.That(mappings[0].CustomerId, Is.EqualTo(customer.Id));
     }
 
     // ------------------------------------------------------------------------------------------------------
@@ -355,10 +354,10 @@ public class TargetGroupEvaluatorTaskTests : TargetGroupEvaluatorTaskTestsBase
 
         var roleBMappings = mappings.Where(x => x.CustomerRoleId == roleB.Id).ToList();
         Assert.That(roleBMappings, Has.Count.EqualTo(1));
-        roleBMappings[0].CustomerId.ShouldEqual(customerB.Id);
+        Assert.That(roleBMappings[0].CustomerId, Is.EqualTo(customerB.Id));
 
         var roleCMappings = mappings.Where(x => x.CustomerRoleId == roleC.Id).Select(x => x.CustomerId).OrderBy(x => x).ToList();
-        roleCMappings.ShouldSequenceEqual(new[] { customerCDirect.Id, customerCNested.Id }.OrderBy(x => x));
+        Assert.That(roleCMappings, Is.EqualTo(new[] { customerCDirect.Id, customerCNested.Id }.OrderBy(x => x)));
     }
 
     // ------------------------------------------------------------------------------------------------------
@@ -385,7 +384,7 @@ public class TargetGroupEvaluatorTaskTests : TargetGroupEvaluatorTaskTestsBase
             .ToListAsync();
 
         Assert.That(mappedCustomerIds, Has.Count.EqualTo(customerCount));
-        mappedCustomerIds.OrderBy(x => x).ShouldSequenceEqual(customerIds.OrderBy(x => x));
+        Assert.That(mappedCustomerIds.OrderBy(x => x), Is.EqualTo(customerIds.OrderBy(x => x)));
     }
 
     // ------------------------------------------------------------------------------------------------------
@@ -430,7 +429,7 @@ public class TargetGroupEvaluatorTaskTests : TargetGroupEvaluatorTaskTestsBase
 
         // Only the first chunk (500 rows) was committed before cancellation was observed; no partial/uncommitted
         // second chunk leaked through, and the loop did not continue to a third chunk.
-        mappedCount.ShouldEqual(500);
+        Assert.That(mappedCount, Is.EqualTo(500));
     }
 
     [Test]
@@ -462,7 +461,7 @@ public class TargetGroupEvaluatorTaskTests : TargetGroupEvaluatorTaskTestsBase
             .AsNoTracking()
             .CountAsync(x => x.CustomerRoleId == role.Id);
 
-        mappedCount.ShouldEqual(0);
+        Assert.That(mappedCount, Is.EqualTo(0));
     }
 
     // ------------------------------------------------------------------------------------------------------
@@ -528,7 +527,7 @@ public class TargetGroupEvaluatorTaskTests : TargetGroupEvaluatorTaskTestsBase
         Assert.That(harness.ProgressCalls.Any(x => x.Message == $"Add customer assignments for role \"{role2.SystemName}\"."), Is.True);
 
         // Each progress message must only be reported once for its role (no duplicate calls per role).
-        harness.ProgressCalls.Count(x => x.Message.Contains(role1.SystemName)).ShouldEqual(1);
-        harness.ProgressCalls.Count(x => x.Message.Contains(role2.SystemName)).ShouldEqual(1);
+        Assert.That(harness.ProgressCalls.Count(x => x.Message.Contains(role1.SystemName)), Is.EqualTo(1));
+        Assert.That(harness.ProgressCalls.Count(x => x.Message.Contains(role2.SystemName)), Is.EqualTo(1));
     }
 }
