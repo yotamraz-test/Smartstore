@@ -28,6 +28,9 @@ public partial class TargetGroupEvaluatorTask(
         var numAdded = 0;
         var rolesCount = 0;
 
+        // Audited: no Important/Essential-tier IDbSaveHook implementation (literal CustomerRoleMapping binding, or
+        // generic BaseEntity/shared-interface binding) actually acts on CustomerRoleMapping inserts, so suppressing
+        // only Normal-tier hooks here is safe. See TargetGroupEvaluatorTaskHookAuditTests for the regression guard.
         using (var scope = new DbContextScope(_db, autoDetectChanges: false, minHookImportance: HookImportance.Important, deferCommit: true))
         {
             int[] roleIds = null;
