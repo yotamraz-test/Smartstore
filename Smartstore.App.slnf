@@ -1,0 +1,34 @@
+{
+  "solution": {
+    "path": "Smartstore.sln",
+    "projects": [
+      "src\\Smartstore.Build\\Smartstore.Build\\Smartstore.Build.csproj",
+      "src\\Smartstore.Build\\Smartstore.ModuleBuilder\\src\\Smartstore.ModuleBuilder.csproj",
+      "src\\Smartstore.Core\\Smartstore.Core.csproj",
+      "src\\Smartstore.Data\\Smartstore.Data.MySql\\Smartstore.Data.MySql.csproj",
+      "src\\Smartstore.Data\\Smartstore.Data.PostgreSql\\Smartstore.Data.PostgreSql.csproj",
+      "src\\Smartstore.Data\\Smartstore.Data.SqlServer\\Smartstore.Data.SqlServer.csproj",
+      "src\\Smartstore.Data\\Smartstore.Data.Sqlite\\Smartstore.Data.Sqlite.csproj",
+      "src\\Smartstore.Modules\\Smartstore.AmazonPay\\Smartstore.AmazonPay.csproj",
+      "src\\Smartstore.Modules\\Smartstore.Apple.Auth\\Smartstore.Apple.Auth.csproj",
+      "src\\Smartstore.Modules\\Smartstore.Clickatell\\Smartstore.Clickatell.csproj",
+      "src\\Smartstore.Modules\\Smartstore.DevTools\\Smartstore.DevTools.csproj",
+      "src\\Smartstore.Modules\\Smartstore.Facebook.Auth\\Smartstore.Facebook.Auth.csproj",
+      "src\\Smartstore.Modules\\Smartstore.Google.Analytics\\Smartstore.Google.Analytics.csproj",
+      "src\\Smartstore.Modules\\Smartstore.Google.Auth\\Smartstore.Google.Auth.csproj",
+      "src\\Smartstore.Modules\\Smartstore.Google.MerchantCenter\\Smartstore.Google.MerchantCenter.csproj",
+      "src\\Smartstore.Modules\\Smartstore.Microsoft.Auth\\Smartstore.Microsoft.Auth.csproj",
+      "src\\Smartstore.Modules\\Smartstore.OfflinePayment\\Smartstore.OfflinePayment.csproj",
+      "src\\Smartstore.Modules\\Smartstore.PayPal\\Smartstore.PayPal.csproj",
+      "src\\Smartstore.Modules\\Smartstore.ShippingByWeight\\Smartstore.ShippingByWeight.csproj",
+      "src\\Smartstore.Modules\\Smartstore.Shipping\\Smartstore.Shipping.csproj",
+      "src\\Smartstore.Modules\\Smartstore.Stripe\\Smartstore.Stripe.csproj",
+      "src\\Smartstore.Modules\\Smartstore.Tax\\Smartstore.Tax.csproj",
+      "src\\Smartstore.Modules\\Smartstore.Twitter.Auth\\Smartstore.Twitter.Auth.csproj",
+      "src\\Smartstore.Modules\\Smartstore.WebApi\\Smartstore.WebApi.csproj",
+      "src\\Smartstore.Web.Common\\Smartstore.Web.Common.csproj",
+      "src\\Smartstore.Web\\Smartstore.Web.csproj",
+      "src\\Smartstore\\Smartstore.csproj"
+    ]
+  }
+}
