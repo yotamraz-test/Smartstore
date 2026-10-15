@@ -9,6 +9,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Moq;
 using NUnit.Framework;
 using Smartstore.Core.Data;
+using Smartstore.Core.Web;
 using Smartstore.Data;
 using Smartstore.Data.Providers;
 using Smartstore.Engine;
@@ -152,7 +153,22 @@ public abstract class TargetGroupEvaluatorTaskTestsBase
     {
         _previousEngine = EngineContext.Current;
 
-        var rootContainer = new ContainerBuilder().Build();
+        // TargetGroupService.LoadDescriptorsAsync() unconditionally builds its full FilterDescriptor list
+        // (used by RuleProviderBase.ConvertRuleAsync for every rule, regardless of which descriptor is
+        // actually being evaluated), and one of those descriptors ("LastDeviceFamily") eagerly calls
+        // DeviceRule.GetDefaultOptions(), which resolves IUserAgentParser from
+        // EngineContext.Current.Application.Services. Without a registration here, any test that exercises
+        // the real rule engine (anything that calls IRuleService.CreateExpressionGroupAsync, which is most
+        // of the parity matrix for TargetGroupEvaluatorTask) fails with a ComponentNotRegisteredException,
+        // even though the rule under test has nothing to do with devices/user agents.
+        var userAgentParserMock = new Mock<IUserAgentParser>();
+        userAgentParserMock
+            .Setup(x => x.GetDetectableAgents(It.IsAny<UserAgentSegment>()))
+            .Returns(Array.Empty<string>());
+
+        var containerBuilder = new ContainerBuilder();
+        containerBuilder.RegisterInstance(userAgentParserMock.Object).As<IUserAgentParser>();
+        var rootContainer = containerBuilder.Build();
 
         var lifetimeScopeAccessorMock = new Mock<ILifetimeScopeAccessor>();
         lifetimeScopeAccessorMock.Setup(x => x.LifetimeScope).Returns((ILifetimeScope)null);
