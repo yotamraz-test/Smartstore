@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Reflection;
 using NUnit.Framework;
 using Smartstore.Core.Bootstrapping;
 using Smartstore.Core.Common.Hooks;
@@ -55,8 +57,10 @@ public class TargetGroupEvaluatorTaskHookAuditTests
     {
         var entityType = typeof(CustomerRoleMapping);
 
-        var hookTypes = typeof(SmartDbContext).Assembly
-            .GetTypes()
+        var assemblies = GetCoreAndModuleAssemblies();
+
+        var hookTypes = assemblies
+            .SelectMany(GetLoadableTypes)
             .Where(t => t is { IsClass: true, IsAbstract: false } && typeof(IDbSaveHook).IsAssignableFrom(t));
 
         var offenders = new List<string>();
@@ -91,5 +95,151 @@ public class TargetGroupEvaluatorTaskHookAuditTests
             $"filters out CustomerRoleMapping explicitly), add it to {nameof(_knownSafeHooksForCustomerRoleMapping)} " +
             "with a justification comment. Otherwise demote its importance or widen the suppression in " +
             $"TargetGroupEvaluatorTask.Run. Offenders: {string.Join(", ", offenders)}");
+    }
+
+    /// <summary>
+    /// Verifies that the scan below actually reaches module assemblies and isn't silently reduced to just
+    /// <see cref="SmartDbContext"/>'s own assembly (which would make the test above vacuously blind to every
+    /// hook defined under <c>src/Smartstore.Modules/</c>).
+    /// </summary>
+    [Test]
+    public void Scan_covers_every_built_module_assembly()
+    {
+        var assemblies = GetCoreAndModuleAssemblies();
+        var moduleAssemblyNames = assemblies
+            .Select(a => a.GetName().Name)
+            .Where(n => n != null && n.StartsWith("Smartstore.", StringComparison.Ordinal) && n != typeof(SmartDbContext).Assembly.GetName().Name)
+            .OrderBy(n => n, StringComparer.Ordinal)
+            .ToArray();
+
+        // This list only needs to prove the scan is non-trivial; it intentionally does not enumerate every
+        // module so this test doesn't have to be touched whenever a module is added/removed/renamed.
+        Assert.That(moduleAssemblyNames.Length, Is.GreaterThanOrEqualTo(10),
+            "Expected the hook audit to scan a double-digit number of built Smartstore.Modules.* assemblies " +
+            "(found: " + string.Join(", ", moduleAssemblyNames) + "). If this drops to 0, the audit above is " +
+            "silently back to only covering Smartstore.Core, which is exactly the gap this test guards against. " +
+            "Make sure 'dotnet build Smartstore.sln' (or at least the module projects) ran before this test.");
+    }
+
+    /// <summary>
+    /// Returns <see cref="SmartDbContext"/>'s own assembly (<c>Smartstore.Core</c>) plus every module assembly
+    /// built under <c>src/Smartstore.Web/Modules/</c> — the directory <see cref="Engine.Modularity.ModuleExplorer"/>
+    /// and <see cref="Engine.Modularity.ModuleLoader"/> enumerate at runtime to discover modules (see
+    /// <c>SmartApplicationContext.ModulesRoot</c>, which is <c>{ContentRoot}/Modules</c>, and
+    /// <c>ModuleDescriptor.AssemblyName</c>, which is <c>{directory name}.dll</c>).
+    ///
+    /// <c>Smartstore.Core.Tests.csproj</c> deliberately does NOT carry a <c>ProjectReference</c> to every
+    /// <c>Smartstore.Modules.*</c> project: every module project references the full <c>Smartstore.Web</c> app
+    /// project (ASP.NET Core host, Razor views, the works) at compile time, so adding ~17 module
+    /// ProjectReferences here would drag the entire web app build (and its Razor compilation) into the Core unit
+    /// test project's build graph: a layering violation and a likely build-time hit, for a test that only needs
+    /// reflection over already-compiled DLLs. Instead this mirrors the app's own discovery
+    /// mechanism: it locates the solution's already-built module output folder and loads each module's main
+    /// assembly via <see cref="Assembly.LoadFrom(string)"/>, exactly like the production host loads module
+    /// assemblies from that same folder. Loading by path still lets the CLR bind the module's references to the
+    /// test process's already-loaded (same-version, same build) <c>Smartstore</c>/<c>Smartstore.Core</c>
+    /// assemblies, so the <see cref="IDbSaveHook"/> and generic hook-base-type identity checks below remain
+    /// valid across assemblies.
+    /// </summary>
+    private static List<Assembly> GetCoreAndModuleAssemblies()
+    {
+        var assemblies = new List<Assembly> { typeof(SmartDbContext).Assembly };
+
+        var modulesRoot = FindBuiltModulesRoot();
+        Assert.That(modulesRoot, Is.Not.Null,
+            "Could not locate the built 'src/Smartstore.Web/Modules' directory by walking up from " +
+            $"'{AppContext.BaseDirectory}'. Build Smartstore.sln (which also builds every Smartstore.Modules.* " +
+            "project) before running this test; otherwise this audit cannot see any module-defined hook and " +
+            "would silently regress to only covering Smartstore.Core.");
+
+        var moduleDirs = modulesRoot.GetDirectories();
+
+        // Let modules resolve their own third-party dependencies (e.g. MiniProfiler, Amazon.Pay.API.SDK) from
+        // their own output folder, mirroring how AppBaseReferenceResolver/ModuleAssemblyLoadContext resolve
+        // module references from the module's own base directory in the real app.
+        ResolveEventHandler resolver = (_, args) => ResolveModuleDependency(args.Name, moduleDirs);
+        AppDomain.CurrentDomain.AssemblyResolve += resolver;
+        try
+        {
+            foreach (var moduleDir in moduleDirs)
+            {
+                var moduleManifest = Path.Combine(moduleDir.FullName, "module.json");
+                var moduleAssemblyPath = Path.Combine(moduleDir.FullName, moduleDir.Name + ".dll");
+
+                if (File.Exists(moduleManifest) && File.Exists(moduleAssemblyPath))
+                {
+                    assemblies.Add(Assembly.LoadFrom(moduleAssemblyPath));
+                }
+            }
+        }
+        finally
+        {
+            AppDomain.CurrentDomain.AssemblyResolve -= resolver;
+        }
+
+        return assemblies;
+    }
+
+    private static Assembly ResolveModuleDependency(string assemblyName, DirectoryInfo[] moduleDirs)
+    {
+        var simpleName = new AssemblyName(assemblyName).Name;
+
+        foreach (var moduleDir in moduleDirs)
+        {
+            var candidate = Path.Combine(moduleDir.FullName, simpleName + ".dll");
+            if (File.Exists(candidate))
+            {
+                try
+                {
+                    return Assembly.LoadFrom(candidate);
+                }
+                catch
+                {
+                    return null;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Walks up from the test assembly's own output directory to the repo root (identified by
+    /// <c>Smartstore.sln</c>) and returns <c>src/Smartstore.Web/Modules</c>, the directory module projects build
+    /// into and the same directory the production host scans for modules (see remarks on
+    /// <see cref="GetCoreAndModuleAssemblies"/>).
+    /// </summary>
+    private static DirectoryInfo FindBuiltModulesRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "Smartstore.sln")))
+        {
+            dir = dir.Parent;
+        }
+
+        if (dir == null)
+        {
+            return null;
+        }
+
+        var modulesDir = new DirectoryInfo(Path.Combine(dir.FullName, "src", "Smartstore.Web", "Modules"));
+        return modulesDir.Exists ? modulesDir : null;
+    }
+
+    private static IEnumerable<Type> GetLoadableTypes(Assembly assembly)
+    {
+        try
+        {
+            return assembly.GetTypes();
+        }
+        catch (ReflectionTypeLoadException ex)
+        {
+            // Some types in a module assembly may fail to load because they reference a dependency that this
+            // test process cannot resolve (e.g. a type that is only usable inside the full Smartstore.Web host).
+            // That's fine as long as the IDbSaveHook implementations themselves (which only depend on
+            // Smartstore/Smartstore.Core/Smartstore.Data, all already loaded here) still load successfully.
+            return ex.Types.Where(t => t != null);
+        }
     }
 }
