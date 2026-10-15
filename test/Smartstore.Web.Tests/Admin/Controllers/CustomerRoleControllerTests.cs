@@ -51,6 +51,12 @@ public class CustomerRoleControllerTests
         };
     }
 
+    [TearDown]
+    public void TearDown()
+    {
+        _controller?.Dispose();
+    }
+
     /// <summary>
     /// Role and task both exist: the scheduler must be run for exactly that role, and the user informed.
     /// </summary>
