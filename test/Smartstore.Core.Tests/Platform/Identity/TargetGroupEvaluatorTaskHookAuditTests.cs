@@ -52,6 +52,41 @@ public class TargetGroupEvaluatorTaskHookAuditTests
         typeof(StoreContext)
     ];
 
+    private static DirectoryInfo[] _moduleDirs;
+    private static ResolveEventHandler _moduleDependencyResolver;
+
+    [OneTimeSetUp]
+    public static void RegisterModuleDependencyResolver()
+    {
+        var modulesRoot = FindBuiltModulesRoot();
+        Assert.That(modulesRoot, Is.Not.Null,
+            "Could not locate the built 'src/Smartstore.Web/Modules' directory by walking up from " +
+            $"'{AppContext.BaseDirectory}'. Build Smartstore.sln (which also builds every Smartstore.Modules.* " +
+            "project) before running this test; otherwise this audit cannot see any module-defined hook and " +
+            "would silently regress to only covering Smartstore.Core.");
+
+        _moduleDirs = modulesRoot.GetDirectories();
+
+        // Keep this resolver registered for the fixture's whole lifetime, not just around Assembly.LoadFrom:
+        // the dependency resolution a module's private references actually need is most likely triggered
+        // lazily by assembly.GetTypes() inside GetLoadableTypes(), which runs in the test methods AFTER
+        // GetCoreAndModuleAssemblies() has already returned. A try/finally scoped only around the LoadFrom
+        // loop unregisters the handler before that point, leaving private-dependency resolution unavailable
+        // for the actual type scan.
+        _moduleDependencyResolver = (_, args) => ResolveModuleDependency(args.Name, _moduleDirs);
+        AppDomain.CurrentDomain.AssemblyResolve += _moduleDependencyResolver;
+    }
+
+    [OneTimeTearDown]
+    public static void UnregisterModuleDependencyResolver()
+    {
+        if (_moduleDependencyResolver != null)
+        {
+            AppDomain.CurrentDomain.AssemblyResolve -= _moduleDependencyResolver;
+            _moduleDependencyResolver = null;
+        }
+    }
+
     [Test]
     public void No_unvetted_Important_or_Essential_hook_targets_CustomerRoleMapping()
     {
@@ -145,36 +180,15 @@ public class TargetGroupEvaluatorTaskHookAuditTests
     {
         var assemblies = new List<Assembly> { typeof(SmartDbContext).Assembly };
 
-        var modulesRoot = FindBuiltModulesRoot();
-        Assert.That(modulesRoot, Is.Not.Null,
-            "Could not locate the built 'src/Smartstore.Web/Modules' directory by walking up from " +
-            $"'{AppContext.BaseDirectory}'. Build Smartstore.sln (which also builds every Smartstore.Modules.* " +
-            "project) before running this test; otherwise this audit cannot see any module-defined hook and " +
-            "would silently regress to only covering Smartstore.Core.");
-
-        var moduleDirs = modulesRoot.GetDirectories();
-
-        // Let modules resolve their own third-party dependencies (e.g. MiniProfiler, Amazon.Pay.API.SDK) from
-        // their own output folder, mirroring how AppBaseReferenceResolver/ModuleAssemblyLoadContext resolve
-        // module references from the module's own base directory in the real app.
-        ResolveEventHandler resolver = (_, args) => ResolveModuleDependency(args.Name, moduleDirs);
-        AppDomain.CurrentDomain.AssemblyResolve += resolver;
-        try
+        foreach (var moduleDir in _moduleDirs)
         {
-            foreach (var moduleDir in moduleDirs)
+            var moduleManifest = Path.Combine(moduleDir.FullName, "module.json");
+            var moduleAssemblyPath = Path.Combine(moduleDir.FullName, moduleDir.Name + ".dll");
+
+            if (File.Exists(moduleManifest) && File.Exists(moduleAssemblyPath))
             {
-                var moduleManifest = Path.Combine(moduleDir.FullName, "module.json");
-                var moduleAssemblyPath = Path.Combine(moduleDir.FullName, moduleDir.Name + ".dll");
-
-                if (File.Exists(moduleManifest) && File.Exists(moduleAssemblyPath))
-                {
-                    assemblies.Add(Assembly.LoadFrom(moduleAssemblyPath));
-                }
+                assemblies.Add(Assembly.LoadFrom(moduleAssemblyPath));
             }
-        }
-        finally
-        {
-            AppDomain.CurrentDomain.AssemblyResolve -= resolver;
         }
 
         return assemblies;
