@@ -28,26 +28,37 @@ public partial class TargetGroupEvaluatorTask(
         var numAdded = 0;
         var rolesCount = 0;
 
+        // Audited: no Important/Essential-tier IDbSaveHook implementation (literal CustomerRoleMapping binding, or
+        // generic BaseEntity/shared-interface binding) actually acts on CustomerRoleMapping inserts, so suppressing
+        // only Normal-tier hooks here is safe. See TargetGroupEvaluatorTaskHookAuditTests for the regression guard.
         using (var scope = new DbContextScope(_db, autoDetectChanges: false, minHookImportance: HookImportance.Important, deferCommit: true))
         {
+            int[] roleIds = null;
+
             // Delete existing system mappings.
             var deleteQuery = _db.CustomerRoleMappings.Where(x => x.IsSystemMapping);
             if (ctx.Parameters.ContainsKey("CustomerRoleIds"))
             {
-                var roleIds = ctx.Parameters["CustomerRoleIds"].ToIntArray();
+                roleIds = ctx.Parameters["CustomerRoleIds"].ToIntArray();
                 deleteQuery = deleteQuery.Where(x => roleIds.Contains(x.CustomerRoleId));
             }
 
             numDeleted = await deleteQuery.ExecuteDeleteAsync(cancelToken);
 
             // Insert new customer role mappings.
-            var roles = await _db.CustomerRoles
+            var rolesQuery = _db.CustomerRoles
                 .Include(x => x.RuleSets)
                 .ThenInclude(x => x.Rules)
                 .AsNoTracking()
                 .AsSplitQuery()
-                .Where(x => x.Active && x.RuleSets.Any(y => y.IsActive))
-                .ToListAsync(cancelToken);
+                .Where(x => x.Active && x.RuleSets.Any(y => y.IsActive));
+
+            if (roleIds != null)
+            {
+                rolesQuery = rolesQuery.Where(x => roleIds.Contains(x.Id));
+            }
+
+            var roles = await rolesQuery.ToListAsync(cancelToken);
             rolesCount = roles.Count;
 
             foreach (var role in roles)
