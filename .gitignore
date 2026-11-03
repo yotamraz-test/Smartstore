@@ -250,3 +250,11 @@ Log.txt
 
 # Local native-package and Docker test scratch space.
 /.temp/
+
+# Python functional-testing environment (pytest harness)
+.venv/
+venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
