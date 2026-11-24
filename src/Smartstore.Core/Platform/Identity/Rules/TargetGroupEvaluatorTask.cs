@@ -28,23 +28,26 @@ public partial class TargetGroupEvaluatorTask(
         var numAdded = 0;
         var rolesCount = 0;
 
+        int[] roleIds = null;
+
+        // Delete existing system mappings. Like legacy, this runs before the DbContextScope is opened and before
+        // roles are loaded. ExecuteDeleteAsync bypasses change tracking and hooks, matching legacy raw SQL deletes.
+        var deleteQuery = _db.CustomerRoleMappings.Where(x => x.IsSystemMapping);
+        if (ctx.Parameters.ContainsKey("CustomerRoleIds"))
+        {
+            roleIds = ctx.Parameters["CustomerRoleIds"].ToIntArray();
+            deleteQuery = deleteQuery.Where(x => roleIds.Contains(x.CustomerRoleId));
+        }
+
+        numDeleted = await deleteQuery.ExecuteDeleteAsync(cancelToken);
+
+        // Documented exception to legacy: legacy disabled hooks completely (hooksEnabled: false). EF Core's DbContextScope
+        // can only suppress hooks below a given importance, so Normal-tier hooks are suppressed here.
         // Audited: no Important/Essential-tier IDbSaveHook implementation (literal CustomerRoleMapping binding, or
         // generic BaseEntity/shared-interface binding) actually acts on CustomerRoleMapping inserts, so suppressing
         // only Normal-tier hooks here is safe. See TargetGroupEvaluatorTaskHookAuditTests for the regression guard.
         using (var scope = new DbContextScope(_db, autoDetectChanges: false, minHookImportance: HookImportance.Important, deferCommit: true))
         {
-            int[] roleIds = null;
-
-            // Delete existing system mappings.
-            var deleteQuery = _db.CustomerRoleMappings.Where(x => x.IsSystemMapping);
-            if (ctx.Parameters.ContainsKey("CustomerRoleIds"))
-            {
-                roleIds = ctx.Parameters["CustomerRoleIds"].ToIntArray();
-                deleteQuery = deleteQuery.Where(x => roleIds.Contains(x.CustomerRoleId));
-            }
-
-            numDeleted = await deleteQuery.ExecuteDeleteAsync(cancelToken);
-
             // Insert new customer role mappings.
             var rolesQuery = _db.CustomerRoles
                 .Include(x => x.RuleSets)
@@ -109,6 +112,7 @@ public partial class TargetGroupEvaluatorTask(
                         await scope.CommitAsync(cancelToken);
                     }
 
+                    // Legacy parity: detach failures are deliberately swallowed (best-effort memory cleanup).
                     try
                     {
                         scope.DbContext.DetachEntities<CustomerRoleMapping>();
