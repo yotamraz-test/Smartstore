@@ -35,6 +35,9 @@ public partial class TargetGroupEvaluatorTask(
         {
             int[] roleIds = null;
 
+            // PARITY EXCEPTION: Legacy deletes with raw SQL BEFORE and OUTSIDE its DbContextScope. Here the delete runs inside the scope,
+            // but ExecuteDeleteAsync bypasses change tracking, hooks and the scope's deferred commit, so it executes immediately and
+            // the observable order (delete first, then insert) is identical.
             // Delete existing system mappings.
             var deleteQuery = _db.CustomerRoleMappings.Where(x => x.IsSystemMapping);
             if (ctx.Parameters.ContainsKey("CustomerRoleIds"))
@@ -45,6 +48,7 @@ public partial class TargetGroupEvaluatorTask(
 
             numDeleted = await deleteQuery.ExecuteDeleteAsync(cancelToken);
 
+            // PARITY NOTE: Legacy uses TableUntracked + Expand(RuleSets). AsNoTracking + AsSplitQuery with Include/ThenInclude is the EF Core equivalent.
             // Insert new customer role mappings.
             var rolesQuery = _db.CustomerRoles
                 .Include(x => x.RuleSets)
@@ -70,6 +74,8 @@ public partial class TargetGroupEvaluatorTask(
                 // Execute active rule sets and collect customer ids.
                 foreach (var ruleSet in role.RuleSets.Where(x => x.IsActive))
                 {
+                    // PARITY: Like legacy, cancellation RETURNS (does not throw) and skips ACL cache invalidation below,
+                    // even if rows were already deleted/added.
                     if (cancelToken.IsCancellationRequested)
                         return;
 
@@ -109,6 +115,7 @@ public partial class TargetGroupEvaluatorTask(
                         await scope.CommitAsync(cancelToken);
                     }
 
+                    // PARITY: Legacy swallows detach failures too (best-effort memory cleanup only).
                     try
                     {
                         scope.DbContext.DetachEntities<CustomerRoleMapping>();
