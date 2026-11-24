@@ -46,87 +46,93 @@ public partial class TargetGroupEvaluatorTask(
         // Audited: no Important/Essential-tier IDbSaveHook implementation (literal CustomerRoleMapping binding, or
         // generic BaseEntity/shared-interface binding) actually acts on CustomerRoleMapping inserts, so suppressing
         // only Normal-tier hooks here is safe. See TargetGroupEvaluatorTaskHookAuditTests for the regression guard.
-        using (var scope = new DbContextScope(_db, autoDetectChanges: false, minHookImportance: HookImportance.Important, deferCommit: true))
+        try
         {
-            // Insert new customer role mappings.
-            var rolesQuery = _db.CustomerRoles
-                .Include(x => x.RuleSets)
-                .ThenInclude(x => x.Rules)
-                .AsNoTracking()
-                .AsSplitQuery()
-                .Where(x => x.Active && x.RuleSets.Any(y => y.IsActive));
-
-            if (roleIds != null)
+            using (var scope = new DbContextScope(_db, autoDetectChanges: false, minHookImportance: HookImportance.Important, deferCommit: true))
             {
-                rolesQuery = rolesQuery.Where(x => roleIds.Contains(x.Id));
-            }
+                // Insert new customer role mappings.
+                var rolesQuery = _db.CustomerRoles
+                    .Include(x => x.RuleSets)
+                    .ThenInclude(x => x.Rules)
+                    .AsNoTracking()
+                    .AsSplitQuery()
+                    .Where(x => x.Active && x.RuleSets.Any(y => y.IsActive));
 
-            var roles = await rolesQuery.ToListAsync(cancelToken);
-            rolesCount = roles.Count;
-
-            foreach (var role in roles)
-            {
-                var ruleSetCustomerIds = new HashSet<int>();
-
-                await ctx.SetProgressAsync(++count, roles.Count, $"Add customer assignments for role \"{role.SystemName.NaIfEmpty()}\".");
-
-                // Execute active rule sets and collect customer ids.
-                foreach (var ruleSet in role.RuleSets.Where(x => x.IsActive))
+                if (roleIds != null)
                 {
-                    if (cancelToken.IsCancellationRequested)
-                        return;
-
-                    var expressionGroup = await _ruleService.CreateExpressionGroupAsync(ruleSet, _targetGroupService);
-                    if (expressionGroup is FilterExpression expression)
-                    {
-                        var filterResult = _targetGroupService.ProcessFilter(expression, 0, 500);
-                        var resultPager = new FastPager<Customer>(filterResult.SourceQuery, 500);
-
-                        while ((await resultPager.ReadNextPageAsync(x => x.Id, x => x, cancelToken)).Out(out var customerIds))
-                        {
-                            ruleSetCustomerIds.AddRange(customerIds);
-                        }
-                    }
+                    rolesQuery = rolesQuery.Where(x => roleIds.Contains(x.Id));
                 }
 
-                // Add mappings.
-                if (ruleSetCustomerIds.Any())
+                var roles = await rolesQuery.ToListAsync(cancelToken);
+                rolesCount = roles.Count;
+
+                foreach (var role in roles)
                 {
-                    foreach (var chunk in ruleSetCustomerIds.Chunk(500))
+                    var ruleSetCustomerIds = new HashSet<int>();
+
+                    await ctx.SetProgressAsync(++count, roles.Count, $"Add customer assignments for role \"{role.SystemName.NaIfEmpty()}\".");
+
+                    // Execute active rule sets and collect customer ids.
+                    foreach (var ruleSet in role.RuleSets.Where(x => x.IsActive))
                     {
                         if (cancelToken.IsCancellationRequested)
                             return;
 
-                        foreach (var customerId in chunk)
+                        var expressionGroup = await _ruleService.CreateExpressionGroupAsync(ruleSet, _targetGroupService);
+                        if (expressionGroup is FilterExpression expression)
                         {
-                            _db.CustomerRoleMappings.Add(new CustomerRoleMapping
-                            {
-                                CustomerId = customerId,
-                                CustomerRoleId = role.Id,
-                                IsSystemMapping = true
-                            });
+                            var filterResult = _targetGroupService.ProcessFilter(expression, 0, 500);
+                            var resultPager = new FastPager<Customer>(filterResult.SourceQuery, 500);
 
-                            ++numAdded;
+                            while ((await resultPager.ReadNextPageAsync(x => x.Id, x => x, cancelToken)).Out(out var customerIds))
+                            {
+                                ruleSetCustomerIds.AddRange(customerIds);
+                            }
+                        }
+                    }
+
+                    // Add mappings.
+                    if (ruleSetCustomerIds.Any())
+                    {
+                        foreach (var chunk in ruleSetCustomerIds.Chunk(500))
+                        {
+                            if (cancelToken.IsCancellationRequested)
+                                return;
+
+                            foreach (var customerId in chunk)
+                            {
+                                _db.CustomerRoleMappings.Add(new CustomerRoleMapping
+                                {
+                                    CustomerId = customerId,
+                                    CustomerRoleId = role.Id,
+                                    IsSystemMapping = true
+                                });
+
+                                ++numAdded;
+                            }
+
+                            await scope.CommitAsync(cancelToken);
                         }
 
-                        await scope.CommitAsync(cancelToken);
-                    }
-
-                    // Legacy parity: detach failures are deliberately swallowed (best-effort memory cleanup).
-                    try
-                    {
-                        scope.DbContext.DetachEntities<CustomerRoleMapping>();
-                    }
-                    catch
-                    {
+                        // Legacy parity: detach failures are deliberately swallowed (best-effort memory cleanup).
+                        try
+                        {
+                            scope.DbContext.DetachEntities<CustomerRoleMapping>();
+                        }
+                        catch
+                        {
+                        }
                     }
                 }
             }
         }
-
-        if (numAdded > 0 || numDeleted > 0)
+        finally
         {
-            await _cache.RemoveByPatternAsync(AclService.ACL_SEGMENT_PATTERN);
+            // Invalidate even if cancelled mid-run: the delete above is already committed and mappings may be partially rebuilt.
+            if (numAdded > 0 || numDeleted > 0)
+            {
+                await _cache.RemoveByPatternAsync(AclService.ACL_SEGMENT_PATTERN);
+            }
         }
 
         Debug.WriteLineIf(numDeleted > 0 || numAdded > 0, $"Deleted {numDeleted} and added {numAdded} customer assignments for {rolesCount} roles.");

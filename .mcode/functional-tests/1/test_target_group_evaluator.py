@@ -10,6 +10,7 @@ import pytest, requests
 BASE = os.environ.get("SS_URL", "http://127.0.0.1:5199")
 DB = os.environ.get("SS_DB", os.path.expandvars("$WORKSPACE_DIR/Smartstore/src/Smartstore.Web/App_Data/Tenants/Default/smartstore.db"))
 EMAIL = os.environ.get("SS_ADMIN_EMAIL", "admin@example.com")
+# Default is the throwaway credential of the locally installed SQLite sandbox app; override via SS_ADMIN_PASSWORD.
 PASSWORD = os.environ.get("SS_ADMIN_PASSWORD", "Admin123!x")
 RUN = "ftrun_" + uuid.uuid4().hex[:6]
 NOW = "2026-01-01 00:00:00"
@@ -102,7 +103,7 @@ def data():
 def wait_task(tid, before_id, timeout=300):
     end = time.time() + timeout
     while time.time() < end:
-        rows, _ = q("select Id,IsRunning,FinishedOnUtc,SucceededOnUtc,Error,ProgressMessage from ScheduleTaskHistory where ScheduleTaskId=? and Id>? order by Id desc limit 1", (tid, before_id))
+        rows, _ = q("select Id,IsRunning,FinishedOnUtc,SucceededOnUtc,Error,ProgressMessage from ScheduleTaskHistory where ScheduleTaskId=? and Id>? order by Id asc limit 1", (tid, before_id))
         if rows and rows[0][2] is not None and not rows[0][1]:
             return rows[0]
         time.sleep(1)
@@ -135,14 +136,17 @@ def run_full(admin, tid, progress=None):
                     progress.add(r[0])
             except Exception:
                 pass
-            time.sleep(0.02)
+            time.sleep(0.002)
 
     if progress is not None:
         threading.Thread(target=poll, daemon=True).start()
     r = admin.get(BASE + "/admin/scheduling/runjob/%d" % tid, timeout=120, allow_redirects=False)
     assert r.status_code in (200, 302), r.status_code
     try:
-        return wait_task(tid, before)
+        row = wait_task(tid, before)
+        if progress is not None and row[5]:
+            progress.add(row[5])
+        return row
     finally:
         stop.set()
 
