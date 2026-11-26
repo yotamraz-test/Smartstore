@@ -106,8 +106,8 @@ def add_stale(role_id, cust_id, system):
         c.execute("insert into CustomerRoleMapping (CustomerId,CustomerRoleId,IsSystemMapping) values (?,?,?)", (cust_id, role_id, system))
 
 
-def apply_rules(admin, role_id):
-    page = admin.get(f"{BASE}/admin/customerrole/edit/{role_id}", timeout=120)
+def apply_rules(admin, role_id, page_role_id=None):
+    page = admin.get(f"{BASE}/admin/customerrole/edit/{page_role_id or role_id}", timeout=120)
     assert page.status_code == 200
     return admin.post(f"{BASE}/admin/customerrole/applyrules/{role_id}", data={"__RequestVerificationToken": token(page.text)},
                       timeout=60, allow_redirects=False)
@@ -159,9 +159,7 @@ class TestFilteredRun:
         assert mappings(b) == [(other, 1)]
 
     def test_apply_rules_unknown_role_404(self, admin):
-        page = admin.get(f"{BASE}/admin/customerrole/edit/1", timeout=120)
-        r = admin.post(f"{BASE}/admin/customerrole/applyrules/99999999", data={"__RequestVerificationToken": token(page.text)},
-                       timeout=60, allow_redirects=False)
+        r = apply_rules(admin, 99999999, page_role_id=1)
         assert r.status_code == 404
 
 
