@@ -20,6 +20,7 @@
   * [Export](framework/platform/export.md)
   * [Hooks](framework/platform/hooks.md)
   * [Identity](framework/platform/identity.md)
+  * [Target group evaluator parity](framework/platform/target-group-evaluator-parity.md)
   * [IO abstraction](framework/platform/io-abstraction.md)
   * [Import](framework/platform/import.md)
   * [Logging](framework/platform/logging.md)
