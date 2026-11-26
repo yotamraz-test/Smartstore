@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -430,20 +430,18 @@ public class TargetGroupEvaluatorTaskTests : TargetGroupEvaluatorTaskTestsBase
         // Only the first chunk (500 rows) was committed before cancellation was observed; no partial/uncommitted
         // second chunk leaked through, and the loop did not continue to a third chunk.
         Assert.That(mappedCount, Is.EqualTo(500));
+
+        // Legacy parity: cancellation returns before the invalidation block, so the cache is NOT invalidated
+        // even though 500 rows were committed.
+        harness.CacheManagerMock.Verify(x => x.RemoveByPatternAsync(It.IsAny<string>()), Times.Never);
     }
 
     [Test]
     public async Task Run_does_not_persist_anything_when_token_is_already_cancelled()
     {
-        // EF Core's own cancellation-token handling kicks in on the very first awaited database call
-        // (the bulk delete), before TargetGroupEvaluatorTask.Run reaches any of its own manual
-        // "cancelToken.IsCancellationRequested" checkpoints, so an already-cancelled token surfaces as a
-        // thrown OperationCanceledException/TaskCanceledException rather than a silent early return. This
-        // is the standard, framework-supported cancellation signal for ITask.Run: TaskExecutor.ExecuteAsync
-        // explicitly catches "ex is OperationCanceledException" around the "await job.Run(ctx, cts.Token)"
-        // call and treats it as a normal cancellation outcome, not a failure (see
-        // Smartstore/src/Smartstore/Scheduling/Services/TaskExecutor.cs). The important invariant for this
-        // test is therefore not "no exception", but "no partial/uncommitted state was persisted".
+        // Legacy parity: cancellation is only honored at the loop checkpoints and results in a silent
+        // early return (no throw). No token is passed to the delete/role queries, so nothing is persisted
+        // for the role, no exception surfaces, and the ACL cache is not invalidated (nothing deleted/added).
         var role = await CreateRoleAsync("PreCancelledRole", active: true);
         var ruleSet = await CreateRuleSetAsync(role);
         await AddLeafRuleAsync(ruleSet, "Active", RuleOperator.IsEqualTo.Operator, "true");
@@ -455,7 +453,8 @@ public class TargetGroupEvaluatorTaskTests : TargetGroupEvaluatorTaskTestsBase
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 
-        Assert.ThrowsAsync<TaskCanceledException>(async () => await harness.Task.Run(harness.Context, cts.Token));
+        Assert.DoesNotThrowAsync(async () => await harness.Task.Run(harness.Context, cts.Token));
+        harness.CacheManagerMock.Verify(x => x.RemoveByPatternAsync(It.IsAny<string>()), Times.Never);
 
         var mappedCount = await DbContext.CustomerRoleMappings
             .AsNoTracking()

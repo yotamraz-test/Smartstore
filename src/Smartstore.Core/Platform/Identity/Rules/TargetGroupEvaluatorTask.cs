@@ -28,39 +28,44 @@ public partial class TargetGroupEvaluatorTask(
         var numAdded = 0;
         var rolesCount = 0;
 
-        // Audited: no Important/Essential-tier IDbSaveHook implementation (literal CustomerRoleMapping binding, or
-        // generic BaseEntity/shared-interface binding) actually acts on CustomerRoleMapping inserts, so suppressing
-        // only Normal-tier hooks here is safe. See TargetGroupEvaluatorTaskHookAuditTests for the regression guard.
+        int[] roleIds = null;
+
+        // Parity with legacy: system mappings are deleted OUTSIDE (before) the DbContextScope.
+        // ExecuteDeleteAsync bypasses change tracking and hooks (legacy used raw SQL as well).
+        // Like legacy, no cancellation token is passed to the delete and role queries: cancellation
+        // is only honored inside the loops below (return, not throw).
+        var deleteQuery = _db.CustomerRoleMappings.Where(x => x.IsSystemMapping);
+        if (ctx.Parameters.ContainsKey("CustomerRoleIds"))
+        {
+            roleIds = ctx.Parameters["CustomerRoleIds"].ToIntArray();
+            deleteQuery = deleteQuery.Where(x => roleIds.Contains(x.CustomerRoleId));
+        }
+
+        numDeleted = await deleteQuery.ExecuteDeleteAsync(CancellationToken.None);
+
+        // Legacy loaded roles (untracked, rule sets expanded) before opening the scope.
+        // EF Core: AsNoTracking + AsSplitQuery with Include/ThenInclude replaces EF6 Expand().
+        var rolesQuery = _db.CustomerRoles
+            .Include(x => x.RuleSets)
+            .ThenInclude(x => x.Rules)
+            .AsNoTracking()
+            .AsSplitQuery()
+            .Where(x => x.Active && x.RuleSets.Any(y => y.IsActive));
+
+        if (roleIds != null)
+        {
+            rolesQuery = rolesQuery.Where(x => roleIds.Contains(x.Id));
+        }
+
+        var roles = await rolesQuery.ToListAsync(CancellationToken.None);
+        rolesCount = roles.Count;
+
+        // EXCEPTION to legacy (hooksEnabled: false, validateOnSave: false, autoCommit: false):
+        // EF Core has no switch to disable hooks entirely; HookImportance.Important suppresses only
+        // Normal-tier hooks. Audited: no Important/Essential-tier IDbSaveHook acts on CustomerRoleMapping
+        // inserts (see TargetGroupEvaluatorTaskHookAuditTests). deferCommit replaces autoCommit: false.
         using (var scope = new DbContextScope(_db, autoDetectChanges: false, minHookImportance: HookImportance.Important, deferCommit: true))
         {
-            int[] roleIds = null;
-
-            // Delete existing system mappings.
-            var deleteQuery = _db.CustomerRoleMappings.Where(x => x.IsSystemMapping);
-            if (ctx.Parameters.ContainsKey("CustomerRoleIds"))
-            {
-                roleIds = ctx.Parameters["CustomerRoleIds"].ToIntArray();
-                deleteQuery = deleteQuery.Where(x => roleIds.Contains(x.CustomerRoleId));
-            }
-
-            numDeleted = await deleteQuery.ExecuteDeleteAsync(cancelToken);
-
-            // Insert new customer role mappings.
-            var rolesQuery = _db.CustomerRoles
-                .Include(x => x.RuleSets)
-                .ThenInclude(x => x.Rules)
-                .AsNoTracking()
-                .AsSplitQuery()
-                .Where(x => x.Active && x.RuleSets.Any(y => y.IsActive));
-
-            if (roleIds != null)
-            {
-                rolesQuery = rolesQuery.Where(x => roleIds.Contains(x.Id));
-            }
-
-            var roles = await rolesQuery.ToListAsync(cancelToken);
-            rolesCount = roles.Count;
-
             foreach (var role in roles)
             {
                 var ruleSetCustomerIds = new HashSet<int>();
@@ -115,11 +120,14 @@ public partial class TargetGroupEvaluatorTask(
                     }
                     catch
                     {
+                        // Legacy parity: detaching is best-effort; failures are intentionally swallowed.
                     }
                 }
             }
         }
 
+        // Cancellation returns from the loops above (as in legacy) and therefore skips this
+        // invalidation, even if rows were already deleted/committed. Legacy behaves identically.
         if (numAdded > 0 || numDeleted > 0)
         {
             await _cache.RemoveByPatternAsync(AclService.ACL_SEGMENT_PATTERN);
