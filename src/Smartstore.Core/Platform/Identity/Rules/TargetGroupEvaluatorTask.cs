@@ -84,7 +84,7 @@ public partial class TargetGroupEvaluatorTask(
                         var filterResult = _targetGroupService.ProcessFilter(expression, 0, 500);
                         var resultPager = new FastPager<Customer>(filterResult.SourceQuery, 500);
 
-                        while ((await resultPager.ReadNextPageAsync(x => x.Id, x => x, cancelToken)).Out(out var customerIds))
+                        while ((await resultPager.ReadNextPageAsync(x => x.Id, x => x, CancellationToken.None)).Out(out var customerIds))
                         {
                             ruleSetCustomerIds.AddRange(customerIds);
                         }
@@ -111,7 +111,7 @@ public partial class TargetGroupEvaluatorTask(
                             ++numAdded;
                         }
 
-                        await scope.CommitAsync(cancelToken);
+                        await scope.CommitAsync(CancellationToken.None);
                     }
 
                     try
